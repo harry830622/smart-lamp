@@ -10,50 +10,38 @@ const int maxLight = 1023;
 const int numLevels = 5;
 const int levelBrightness = (maxBrightness - minBrightness) / numLevels;
 const int levelLight = (maxLight - minLight) / numLevels;
-
-// States
-const int stateInitial = 0;
-const int stateDetecting = 1;
-const int stateStable = 2;
-const int stateCounting = 3;
-const int stateFading = 4;
-
-// stateInitial
-const int initialLevel = 1;
-const int initialBrightness = initialLevel * levelBrightness;
-
-// stateDetecting
-const int numDetections = 1000;
-
-// stateStable
-
-// stateCounting
-const int currentCount = 0;
-
-// stateFading
+const int numDetections = 50;
+const int countThreshold = 50;
 const int fadeTime = 3000;
 const int fadeStep = 5;
-const int countThreshold = 50;
 
-//
+// States
+const int stateDetecting = 0;
+const int stateStable = 1;
+const int stateCounting = 2;
+const int stateFading = 3;
+
 int currentState = 0;
-int currentLevel = initialLevel;
-int currentBrightness = initialBrightness;
-int currentLight = 0;
+int stableBrightness = 0;
 int currentNumDetections = 0;
-int lightCounts[maxLight - minLight + 1];
+int levelCounts[numLevels];
 int maxCount = 0;
-int maxCountLight = 0;
+int maxCountLevel = 0;
+int stableLevel = 1;
+int targetLevel = 1;
+int currentCount = 0;
+int startTime = 0;
+int fadeStepTime = 0;
 
 // Functions
-void resetLightCounts() {
-  for (int i = 0; i < maxLight - minLight + 1; ++i) {
-    lightCounts[i] = 0;
+void resetLevelCounts() {
+  for (int i = 0; i < numLevels; ++i) {
+    levelCounts[i] = 0;
   }
 }
 
 int mapLightToLevel(int light) {
-  return numLevels - int(light / float(maxLight - minLight) * numLevels) + 1;
+  return numLevels - int(light / float(maxLight - minLight) * numLevels + 0.5) + 1;
 }
 
 // Arduino
@@ -63,46 +51,43 @@ void setup() {
 }
 
 void loop() {
+  Serial.println(currentState);
   switch (currentState) {
-    case stateInitial:
-      analogWrite(ledPin, initialBrightness);
-      currentState = stateStable;
-      break;
-    case stateDetecting:
-      analogWrite(ledPin, currentBrightness);
+    case stateDetecting: {
       ++currentNumDetections;
-      currentLight = analogRead(lightSensorPin);
-      ++lightCounts[currentLight];
-      if (lightCounts[currentLight] > maxCount) {
-        maxCount = lightCounts[currentLight];
-        maxCountLight = currentLight;
+      int light = analogRead(lightSensorPin);
+      int level = mapLightToLevel(light);
+      ++levelCounts[level];
+      if (levelCounts[level] > maxCount) {
+        maxCount = levelCounts[level];
+        maxCountLevel = level;
       }
       if (currentNumDetections >= numDetections) {
         currentState = stateStable;
-        currentLevel = mapLightToLevel(maxCountLight);
-        stableLevel = currentLevel;
-        currentBrightness = levelBrightness * currentLevel;
+        stableLevel = maxCountLevel;
+        stableBrightness = levelBrightness * stableLevel;
         currentNumDetections = 0;
-        resetLightCounts();
+        resetLevelCounts();
         maxCount = 0;
-        maxCountLight = 0;
+        maxCountLevel = 1;
       }
       break;
-    case stateStable:
-      analogWrite(ledPin, currentBrightness);
-      currentLight = analogRead(lightSensorPin);
-      currentLevel = mapLightToLevel(currentLight);
-      if (currentLevel != stableLevel) {
-        currentState = stateFading;
-        targetLevel = currentLevel;
-        currentCount = 0;
+    }
+    case stateStable: {
+      analogWrite(ledPin, stableBrightness);
+      int light = analogRead(lightSensorPin);
+      int level = mapLightToLevel(light);
+      if (level != stableLevel) {
+        currentState = stateCounting;
+        targetLevel = level;
       }
       break;
-    case stateCounting:
-      analogWrite(ledPin, currentBrightness);
-      currentLight = analogRead(lightSensorPin);
-      currentLevel = mapLightToLevel(currentLight);
-      if (currentLevel != stableLevel) {
+    }
+    case stateCounting: {
+      analogWrite(ledPin, stableBrightness);
+      int light = analogRead(lightSensorPin);
+      int level = mapLightToLevel(light);
+      if (level == targetLevel) {
         ++currentCount;
       } else {
         currentState = stateStable;
@@ -111,10 +96,35 @@ void loop() {
       if (currentCount >= countThreshold) {
         currentState = stateFading;
         currentCount = 0;
+        fadeStepTime = fadeTime / (abs(targetLevel - stableLevel) * levelBrightness / fadeStep);
+        startTime = millis();
       }
       break;
-    case stateFading:
-      // TODO
+    }
+    case stateFading: {
+      analogWrite(ledPin, stableBrightness);
+      int t = millis();
+      if (t - startTime >= fadeStepTime) {
+        startTime += fadeStepTime;
+        int targetBrightness = targetLevel * levelBrightness;
+        if (targetBrightness > stableBrightness) {
+          stableBrightness += fadeStep;
+          if (stableBrightness >= targetBrightness) {
+            currentState = stateStable;
+            stableLevel = targetLevel;
+          }
+        }
+        if (targetBrightness < stableBrightness) {
+          stableBrightness -= fadeStep;
+          if (stableBrightness <= targetBrightness) {
+            currentState = stateStable;
+            stableLevel = targetLevel;
+          }
+        }
+      }
+      stableBrightness = max(minBrightness, stableBrightness);
+      stableBrightness = min(maxBrightness, stableBrightness);
       break;
+    }
   }
 }
