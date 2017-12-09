@@ -9,7 +9,7 @@ const int maxLight = 1023;
 
 // Pin setup
 const int lightSensorPin = 0;
-const int chargerReceiverPin = 1; // TODO
+const int chargerReceiverPin = 1;
 const int touchSensorPin = 4;
 const int ledPin = 5;
 
